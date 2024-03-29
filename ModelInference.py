@@ -113,14 +113,17 @@ def scale_temporal_sequence(temporal_sequence, scaling_ratio, speaking_turn_dura
     return scaled_sequence
 
 
-def append_sequences_to_file(observation_sequence, action_sequence, file_path):
+def append_sequences_to_file(observation_sequence, action_sequence, speaking_turn_duration, file_path):
 
     with open(file_path, 'a') as file:  # Open file in append mode
         # Convert sequences to string format
         obs_seq_str = ' '.join(str(item) for item in observation_sequence)
         act_seq_str = ' '.join(str(item) for item in action_sequence)
+        # Convert speaking turn duration to string format
+        speaking_turn_duration_str = f"Duration: {speaking_turn_duration:.2f} seconds"
 
         # Append the observation sequence, then the action sequence, then an empty line
+        file.write(speaking_turn_duration_str + '\n')
         file.write(obs_seq_str + '\n')
         file.write(act_seq_str + '\n\n')  # Two newlines to add an empty line between chunks
 
@@ -226,31 +229,41 @@ def load_data_from_file(file_path):
     return all_data
 
 def preprocess_data(data):
-
     filtered_data = [chunk for chunk in data if is_valid_chunk(chunk)]
+    sequence_length = 137  # Assuming 25 FPS
 
-    sequence_length = 137 # Assuming 25  SAMPLING RATE IS HERE TO ADJUST
+    processed_chunk = []
 
-    data = filtered_data
-
-    processed_chunk =[]
-
-    for chunk in data:
+    for i, chunk in enumerate(filtered_data):
         if not chunk[0]:  # Skip if the observation vector is empty
             continue
 
-        valid_start_times1 = [event[1] for event in chunk[0] if isinstance(event[1], float) and event[1] > 0]
-        valid_start_times2 = [event[1] for event in chunk[1] if isinstance(event[1], float) and event[1] > 0]
+        # Combine and filter start times and durations for observation and action events
+        combined_events = chunk[0] + chunk[1]
+        valid_events = [(event[1], event[2]) for event in combined_events if
+                        isinstance(event[1], float) and event[1] > 0]
 
-        if not valid_start_times1 and valid_start_times2:# Skip if no valid start times
+        if not valid_events:  # Skip if no valid start times
             continue
-        min_start_time = min(min(valid_start_times1), min(valid_start_times2))
 
-        # Calculate speaking turn duration as the end of the last event minus min_start_time
-        valid_end_times1 = [(event[1] + event[2]) for event in chunk[0] if isinstance(event[1], float) and event[1] > 0]
-        valid_end_times2 = [(event[1] + event[2]) for event in chunk[1] if isinstance(event[1], float) and event[1] > 0]
-        max_end_time = max(max(valid_end_times1), max(valid_end_times2)) if valid_end_times1 and valid_end_times2 else 0
+        # Calculate the minimum start time and the maximum end time
+        min_start_time = min(event[0] for event in valid_events)
+        max_end_time = max((event[0] + event[1] for event in valid_events), default=min_start_time)
         speaking_turn_duration = max_end_time - min_start_time
+
+        # Adjust speaking turn duration based on next chunk's starting time
+        if i + 1 < len(filtered_data):
+            next_chunk = filtered_data[i + 1]
+            next_chunk_events = next_chunk[0] + next_chunk[1]
+            next_chunk_start_times = [event[1] for event in next_chunk_events if
+                                      isinstance(event[1], float) and event[1] > 0]
+
+            if next_chunk_start_times:
+                next_chunk_start_time = min(next_chunk_start_times)
+                current_interaction_time = min_start_time + speaking_turn_duration
+                if current_interaction_time > next_chunk_start_time:
+                    speaking_turn_duration = next_chunk_start_time - min_start_time
+
 
         if speaking_turn_duration <= 0: # Skip turns with non-positive duration
             continue
@@ -286,7 +299,7 @@ def main():
 
     # Step 2: Process a single file and prepare data for the model
     file_path = 'C:/Users/NEZIH YOUNSI/Desktop/Hcapriori_input/Observaton_Context_Tuples/interview_36_hcapriori__processed_to_OCTuple.txt'
-    #file_path = '~/Observaton_Context_Tuples/interview_36_hcapriori__processed_to_OCTuple.txt'
+    #ile_path = 'interview_36_hcapriori__processed_to_OCTuple.txt'
     # Assuming 'process_single_file' returns data ready for model input
 
     all_chunks = process_single_file(file_path)
@@ -322,7 +335,11 @@ def main():
         guide_w=guide_w,
     )
 
-    model.load_state_dict(torch.load(model_path, map_location=device))  # Load the trained weights
+    model.load_state_dict(torch.load(model_path, map_location=device))# Load the trained weights
+
+    #model.load_state_dict(torch.load(model_path))  # Load the trained weights
+    #model.to(device)
+
     model.eval()  # Set the model to evaluation mode
 
     guide_weight = guide_w
@@ -378,7 +395,7 @@ def main():
         print(speaking_turn_duration)
 
         scaling_ratio = speaking_turn_duration / average_duration
-        obs_seq = x_batch[0].numpy()
+        obs_seq = x_batch[0].cpu().numpy()
 
         temporal_obs_sequence = transcribe_sequence_to_temporal_format(obs_seq)
         scaled_obs_sequence = scale_temporal_sequence(temporal_obs_sequence, scaling_ratio, speaking_turn_duration)
@@ -388,7 +405,7 @@ def main():
         scaled_act_sequence = scale_temporal_sequence(temporal_act_sequence, scaling_ratio, speaking_turn_duration)
         print("Best Prediction:", scaled_act_sequence)
         save_file = '36_txt_compar.txt'
-        append_sequences_to_file(scaled_obs_sequence, scaled_act_sequence, save_file)
+        append_sequences_to_file(scaled_obs_sequence, scaled_act_sequence, speaking_turn_duration, save_file)
         real_action_sequence = temporal_to_frame_sequence(scaled_act_sequence, speaking_turn_duration, fps = 25)
         print("real prediction:", real_action_sequence)
         output_csv_path = 'intermed.csv'
