@@ -6,7 +6,46 @@ from sklearn.neighbors import KernelDensity
 import pandas as pd
 from Model import Model_mlp_diff, Model_Cond_Diffusion, ObservationEmbedder, SpeakingTurnDescriptorEmbedder, ChunkDescriptorEmbedder
 
+import random
 
+
+def generate_random_series_sequence(sequence_length, max_series=4):
+    # Initialize the sequence with zeros
+    sequence = [0] * sequence_length
+
+    # Define the values that series can take
+    possible_values = [1, 2, 3]
+
+    # Calculate the maximum length for a series (half of the global sequence length)
+    max_series_length = sequence_length // 2
+
+    # Initialize a counter for the number of series added
+    series_count = 0
+
+    while series_count < max_series:
+        # Choose a random value for the series
+        value = random.choice(possible_values)
+
+        # Choose a random length for the series, at least 5 frames and at most max_series_length
+        series_length = random.randint(5, max_series_length)
+
+        # Choose a random start position for the series
+        start_position = random.randint(0, sequence_length - series_length)
+
+        # Fill the sequence with the value for the length of the series
+        for i in range(start_position, start_position + series_length):
+            sequence[i] = value
+
+        # Increment the counter for the number of series added
+        series_count += 1
+
+    return sequence
+
+
+# Example usage:
+sequence_length = 100  # Length of the sequence
+randomized_sequence = generate_random_series_sequence(sequence_length)
+print("Randomized Sequence:", randomized_sequence)
 n_hidden = 512
 n_T = 500
 num_event_types =13
@@ -177,7 +216,7 @@ def process_single_file(file_path):
     max_z_len = 3
 
     # Step 2: Transform data to sequences, including the chunk_descriptor
-    for (observation, action, chunk_descriptor) , speaking_turn_duration in processed_data:
+    for (observation, action, chunk_descriptor), speaking_turn_duration in processed_data:
         x, z = transform_obs_to_sequence(observation, sequence_length)
         y = transform_action_to_sequence(action, sequence_length)
 
@@ -298,9 +337,10 @@ def main():
     print(f"Using device: {device}")
 
     # Step 2: Process a single file and prepare data for the model
-    file_path = 'C:/Users/NEZIH YOUNSI/Desktop/Hcapriori_input/Observaton_Context_Tuples/interview_36_hcapriori__processed_to_OCTuple.txt'
+    #file_path = 'C:/Users/NEZIH YOUNSI/Desktop/Hcapriori_input/Observaton_Context_Tuples/interview_36_hcapriori__processed_to_OCTuple.txt'
     #ile_path = 'interview_36_hcapriori__processed_to_OCTuple.txt'
     # Assuming 'process_single_file' returns data ready for model input
+    file_path = 'intervieww_36_606.txt'
 
     all_chunks = process_single_file(file_path)
 
@@ -317,8 +357,8 @@ def main():
                                                sequence_length)
     mi_embedder = SpeakingTurnDescriptorEmbedder(num_event_types, event_embedding_dim, embed_output_dim)
     chunk_embedder = ChunkDescriptorEmbedder(continious_embedding_dim=16, valence_embedding_dim=8, output_dim=64)
-    model_path = 'C:/Users/NEZIH YOUNSI/OffLineModel/saved_model_NewmodelChunkd.pth'
-    #model_path = 'saved_model_NewmodelChunkd.pth'
+    #model_path = 'C:/Users/NEZIH YOUNSI/OffLineModel/saved_model_NewmodelChunkd.pth'
+    model_path = 'saved_model_NewmodelChunkdCFG.pth'
     nn_model = Model_mlp_diff(
         observation_embedder, mi_embedder, chunk_embedder, sequence_length, net_type="transformer")
     model = Model_Cond_Diffusion(
@@ -335,15 +375,15 @@ def main():
         guide_w=guide_w,
     )
 
-    model.load_state_dict(torch.load(model_path, map_location=device))# Load the trained weights
+    #model.load_state_dict(torch.load(model_path, map_location=device))# Load the trained weights
 
-    #model.load_state_dict(torch.load(model_path))  # Load the trained weights
-    #model.to(device)
+    model.load_state_dict(torch.load(model_path))  # Load the trained weights
+    model.to(device)
 
     model.eval()  # Set the model to evaluation mode
 
     guide_weight = guide_w
-    kde_samples = 3 # Example: Number of samples to generate for KDE
+    kde_samples = 1 # Example: Number of samples to generate for KDE
 
     real_actions =[]
     # Iterate over each chunk in the file
@@ -396,6 +436,8 @@ def main():
 
         scaling_ratio = speaking_turn_duration / average_duration
         obs_seq = x_batch[0].cpu().numpy()
+        #target_seq = y_batch[0].cpu().numpy()
+        #best_prediction=target_seq
 
         temporal_obs_sequence = transcribe_sequence_to_temporal_format(obs_seq)
         scaled_obs_sequence = scale_temporal_sequence(temporal_obs_sequence, scaling_ratio, speaking_turn_duration)
@@ -407,6 +449,7 @@ def main():
         save_file = '36_txt_compar.txt'
         append_sequences_to_file(scaled_obs_sequence, scaled_act_sequence, speaking_turn_duration, save_file)
         real_action_sequence = temporal_to_frame_sequence(scaled_act_sequence, speaking_turn_duration, fps = 25)
+        real_action_sequence = generate_random_series_sequence(len(real_action_sequence))
         print("real prediction:", real_action_sequence)
         output_csv_path = 'intermed.csv'
         df = append_sequence_to_csv(real_action_sequence, output_csv_path)
